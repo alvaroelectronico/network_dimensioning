@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import time
+from hard_coded_data import *
 
 def read_data(folder_path):
 
@@ -70,3 +71,86 @@ def read_data(folder_path):
     return lots, sites, nodes, cells, existing_sites, potential_sites, initial_capacity, max_capacity, demand, \
            coverage, existing_node_in_site, potential_node_in_site, existing_cell_in_site_node, potential_cell_in_site_node, \
            site_cells_lighting_lot_node, lots_covered_by_site_node_cell
+
+
+def check_solution(self):
+    if len(self.solution.keys()) == 0:
+        self.get_solution()
+
+    # Demand is met
+    # demand_unmet = [(l, n) for l in self.lots for n in self.nodes
+    #                 if self.demand[l, n] > sum(self.solution['traffic_of_cell'][s, n, c, l]
+    #                                           for s in self.sites for c in self.cells
+    #                                           if (s, n, c, l) in self.coverage)
+    #                ]
+    # if len(demand_unmet) > 0:
+    #     for (l, n) in demand_unmet:
+    #         self.solution_check += "ERROR. Demand not met. Lot {}, node {}\n".format(l, n)
+    # else:
+    #      self.solution_check += "OK. Demand constraint met"
+
+    # Capacity not violated
+    capacity_violated = [(s, n, c) for s in self.sites for n in self.nodes for c in self.cells
+                         if self.solution["final_capacity"][s, n, c] < sum(self.solution['traffic_of_cell'][s, n, c, l]
+                                                                           for l in self.lots if
+                                                                           (s, n, c, l) in self.coverage)]
+    if len(capacity_violated) > 0:
+        for (s, n, c) in capacity_violated:
+            self.solution_check += "ERROR. Capacity violated. Site {}, node {}, cell {}\n".format(s, n, c)
+    else:
+        self.solution_check += "OK. Capacity not violated"
+    print(self.solution_check)
+
+def export_sol_to_csv(solution, ouput_path, file_name):
+    # Traffic
+    df = pd.Series(solution["traffic"]).reset_index()
+    df.columns = ["site", "node", "cell", "lot", "traffic" ]
+    df.to_csv(os.path.join(ouput_path, "traffic_{}.csv".format(file_name)))
+    # New sites
+    if len(solution["new_sites"]) > 0:
+        df = pd.Series(solution["new_sites"])
+        df.columns = ["site"]
+        df.to_csv(os.path.join(ouput_path, "new_sites_{}.csv".format(file_name)))
+    # New nodes
+    if len(solution["new_nodes"]) > 0:
+        df = pd.DataFrame.from_dict(solution["new_nodes"], orient="columns")
+        df.columns = ["site", "node"]
+        df.to_csv(os.path.join(ouput_path,"new_nodes_{}.csv".format(file_name)))
+    # New cells
+    if len(solution["new_cells"]) > 0:
+        df = pd.DataFrame.from_dict(solution["new_cells"], orient="columns")
+        df.columns = ["site", "node", "cell"]
+        df.to_csv(os.path.join(ouput_path,"new_cells_{}.csv".format(file_name)))
+    # Upgraded cells
+    if len(solution["upgraded_cells"]) > 0:
+        df = pd.DataFrame.from_dict(solution["upgraded_cells"], orient="columns")
+        df.columns = ["site", "node", "cell"]
+        df.to_csv(os.path.join(ouput_path, "upgraded_cells_{}.csv".format(file_name)))
+    # pd.DataFrame(performance_data, index=[0]).to_csv(os.path.join(ouput_path, "general_{}.csv".format(file_name)))
+
+def recalculate_obj_func(solution):
+    cost = len(solution['new_sites'])*pCAPEX_NEW_SITE
+    cost += len(solution['new_nodes'])*pCAPEX_NEW_NODE
+    cost += len(solution['new_cells'])*pCAPEX_NEW_CELL
+    cost += len(solution['upgraded_cells'])*pCAPEX_UPGRADE_CEll
+    cost += len(solution['new_sites'])*pOPEX_SITE
+    return cost
+
+
+def read_output_daniele(file_path):
+ df = pd.read_csv(file_path)
+ return df
+
+def solution_check(df):
+    traffic = df.set_index(['Site', 'node', 'cell', 'lot'])["demand"].to_dict()
+    # capacity = df.set_index(['Site', 'node', 'cell'])['capacity'].to_dict()
+
+    df_max_cap_violated = df[df.capacity > df.max_cap]
+
+    df_traffic_cell = df.groupby(by=["Site", "node", "cell"])["demand"].sum().reset_index()
+    df_traffic_cell = pd.merge(df_traffic_cell, df[["Site", "node", "cell", "capacity"]], how="left")
+    df_cap_violated = df_traffic_cell[df.demand > df.capacity]
+
+    df_demand_satified = df.groupby(by=["node", "lot"])["demand"].sum().reset_index()
+
+    pass

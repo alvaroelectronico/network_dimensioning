@@ -3,11 +3,11 @@ from hard_coded_data import *
 import gurobipy as gp
 import os
 from gurobipy import GRB
-from read_data import read_data
+from tools import *
 import time
 import pickle
 
-class NP_problem:
+class NP_gurobipy:
     def __init__(self, name, input_folder):
         self.name = name
         self.input_folder = input_folder
@@ -164,10 +164,10 @@ class NP_problem:
         start_time = time.time()
 
         # If installing new cells, all three are updated
-        self.model.addConstrs((self.v01NewCell[s, n, c] == self.v01NewCell[s, n, c2]
-            for s in self.sites for n in self.nodes for c in self.cells for c2 in self.cells
-            if (s, n, c) in self.potential_cell_in_site_node and (s, n, c2) in self.potential_cell_in_site_node),
-        "AllOrNoneNewCell")
+        # self.model.addConstrs((self.v01NewCell[s, n, c] == self.v01NewCell[s, n, c2]
+        #     for s in self.sites for n in self.nodes for c in self.cells for c2 in self.cells
+        #     if (s, n, c) in self.potential_cell_in_site_node and (s, n, c2) in self.potential_cell_in_site_node),
+        # "AllOrNoneNewCell")
 
         # If installing new cells, all three are updated
         self.model.addConstrs((self.v01UpgradeCell[s, n, c] == self.v01UpgradeCell[s, n, c2]
@@ -185,6 +185,7 @@ class NP_problem:
             self.model.setParam(param, self.solver_params[param])
 
     def solve_model(self):
+        self.build_model()
         self.set_solver_params()
         self.model.optimize()
 
@@ -199,117 +200,65 @@ class NP_problem:
     def write_lp_file(self):
         self.model.write("network_planning.lp")
 
-    def gen_solution(self):
+    def get_solution(self):
         self.solution['new_sites'] = [s for s in self.potential_sites if self.v01NewSite[s].X == 1]
         self.solution['new_nodes'] = [(s, n) for (s, n) in self.potential_node_in_site if self.v01NewNode[s, n].X == 1]
         self.solution['new_cells'] = [(s, n, c) for (s, n, c) in self.potential_cell_in_site_node if self.v01NewCell[s, n, c].X == 1]
         self.solution['upgraded_cells'] = [(s, n, c) for (s, n, c) in self.existing_cell_in_site_node if
                                       self.v01UpgradeCell[s, n, c].X == 1]
-        self.solution['traffic_of_cell'] = {i: self.vTrafficOfCell[i].X for i in self.coverage}
+        self.solution['traffic'] = {i: self.vTrafficOfCell[i].X for i in self.coverage}
         self.solution['final_capacity'] = {(s, n, c): self.vFinalCapacity[s, n , c].X for s in self.sites for n in self.nodes for c in self.cells}
 
-    def output_df(self):
-        if len(self.solution.keys()) == 0:
-            self.gen_solution()
-        # Traffic
-        df = pd.Series(self.solution["traffic_of_cell"]).reset_index()
-        df.columns = ["site", "node", "cell", "lot", "traffic" ]
-        df.to_csv("{}_traffic.csv".format(self.name))
-        # New sites
-        if len(self.solution["new_sites"]) > 0:
-            df = pd.Series(self.solution["new_sites"])
-            df.columns = ["site"]
-            df.to_csv("{}_new_sites.csv".format(self.name))
-        # New nodes
-        if len(self.solution["new_nodes"]) > 0:
-            df = pd.DataFrame.from_dict(self.solution["new_nodes"], orient="columns")
-            df.columns = ["site", "node"]
-            df.to_csv("{}_new_nodes.csv".format(self.name))
-        # New cells
-        if len(self.solution["new_cells"]) > 0:
-            df = pd.DataFrame.from_dict(self.solution["new_cells"], orient="columns")
-            df.columns = ["site", "node", "cell"]
-            df.to_csv("{}_new_cells.csv".format(self.name))
-        # Upgraded cells
-        if len(self.solution["upgraded_cells"]) > 0:
-            df = pd.DataFrame.from_dict(self.solution["upgraded_cells"], orient="columns")
-            df.columns = ["site", "node", "cell"]
-            df.to_csv("{}_upgraded_cells.csv".format(self.name))
-        pd.DataFrame(self.performance_data, index=[0]).to_csv("{}_general.csv".format(self.name))
-        return df
-
-    def check_solution(self):
-        if len(self.solution.keys()) == 0:
-            self.gen_solution()
-
-        # Demand is met
-        # demand_unmet = [(l, n) for l in self.lots for n in self.nodes
-        #                 if self.demand[l, n] > sum(self.solution['traffic_of_cell'][s, n, c, l]
-        #                                           for s in self.sites for c in self.cells
-        #                                           if (s, n, c, l) in self.coverage)
-        #                ]
-        # if len(demand_unmet) > 0:
-        #     for (l, n) in demand_unmet:
-        #         self.solution_check += "ERROR. Demand not met. Lot {}, node {}\n".format(l, n)
-        # else:
-        #      self.solution_check += "OK. Demand constraint met"
-
-
-        # Capacity not violated
-        capacity_violated = [(s, n, c) for s in self.sites for n in self.nodes for c in self.cells
-                             if self.solution["final_capacity"][s, n, c] < sum(self.solution['traffic_of_cell'][s, n, c, l]
-                                                                   for l in self.lots if (s, n, c, l) in self.coverage)]
-        if len(capacity_violated) > 0:
-            for (s, n, c) in capacity_violated:
-                self.solution_check += "ERROR. Capacity violated. Site {}, node {}, cell {}\n".format(s, n, c)
-        else:
-             self.solution_check += "OK. Capacity not violated"
-        print(self.solution_check)
 
 def main():
-    DATA_PATH = "..\..\..\datos_entrada\csv\casos_20220401"
-    cases = [c for c in os.listdir(DATA_PATH)]
-    cases_paths = {c: os.path.join(DATA_PATH, c) for c in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, c))}
+    # DATA_PATH = "C:\\Users\Alvaro\Dropbox\\academico\\network_planning\instances"
+    DATA_PATH = "D:\Dropbox\\academico\\network_planning\instances" # Dropbox Lenovo
 
-    # case_path = "1000km2_0"
-    # folder_path = os.path.join(DATA_PATH, case_path)
+    cases_paths = {c: os.path.join(DATA_PATH, c) for c in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, c))}
 
     df_performance = pd.DataFrame(columns=["case", "obj_func", "gap", "run_time"])
 
     ordered_cases_paths_keys = list(cases_paths.keys())
     ordered_cases_paths_keys.sort()
 
-    for case in ordered_cases_paths_keys[:3]:
-        instance = NP_problem(case, cases_paths[case])
-        instance.build_model()
+    for case in ordered_cases_paths_keys[12:13]:
+        instance = NP_gurobipy(case, cases_paths[case])
         instance.solver_params = dict(TIME_LIMIT=6000, MIPGap=0.00)
         instance.solve_model()
-        instance.get_df_performance_data()
-        df_performance = df_performance.append(instance.performance_data, ignore_index=True)
-        df_performance.to_csv(os.path.join(DATA_PATH, "results_network_planning.csv"))
-        instance.gen_solution()
-        df = instance.output_df()
+        instance.get_solution()
+        # instance.get_df_performance_data()
+        # df_performance = df_performance.append(instance.performance_data, ignore_index=True)
+        # df_performance.to_csv(os.path.join(DATA_PATH, "results_network_planning.csv"))
 
-        with open(case, 'wb') as handle:
+        recalculated_cost = recalculate_obj_func(instance.solution)
+        export_sol_to_csv(instance.solution, cases_paths[case], instance.name)
+
+        with open(os.path.join(DATA_PATH, cases_paths[case], "solution.pickle"), 'wb') as handle:
             pickle.dump(instance.solution, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print("case {} solved".format(case))
 
-    df_performance.to_csv("network_planning.csv")
+    # df_performance.to_csv("network_planning.csv")
 
 if __name__ == "__main__":
     main()
     print("run completed")
 
-    print("New cells")
-    for (site, node, cell) in [i for i in instance.potential_cell_in_site_node if instance.v01NewCell[i].X == 1]:
-        print("{}-{}-{}".format(site, node, cell))
+    # file_path = "D:\Dropbox\\academico\\network_planning\instances\\00001km2_0\\out.csv"
+    # df_output = read_output_daniele(file_path)
+    # solution_check(df_output)
+    # print(df_output)
 
-    list = [(i[0], i[1]) in [i for i in instance.potential_cell_in_site_node if instance.v01NewCell[i].X == 1]]
-
-    list = [(s, n) for s in instance.sites for n in instance.nodes if sum(instance.v01NewCell[s, n, c].X for c in instance.cells
-                                        if (s, n, c) in instance.potential_cell_in_site_node) == 1]
-
-    list2 = [(s, n) for s in instance.sites for n in instance.nodes if sum(instance.v01UpgradeCell[s, n, c].X for c in instance.cells
-                                        if (s, n, c) in instance.existing_cell_in_site_node) == 2]
+    # print("New cells")
+    # for (site, node, cell) in [i for i in instance.potential_cell_in_site_node if instance.v01NewCell[i].X == 1]:
+    #     print("{}-{}-{}".format(site, node, cell))
+    #
+    # list = [(i[0], i[1]) in [i for i in instance.potential_cell_in_site_node if instance.v01NewCell[i].X == 1]]
+    #
+    # list = [(s, n) for s in instance.sites for n in instance.nodes if sum(instance.v01NewCell[s, n, c].X for c in instance.cells
+    #                                     if (s, n, c) in instance.potential_cell_in_site_node) == 1]
+    #
+    # list2 = [(s, n) for s in instance.sites for n in instance.nodes if sum(instance.v01UpgradeCell[s, n, c].X for c in instance.cells
+    #                                     if (s, n, c) in instance.existing_cell_in_site_node) == 2]
     # print()
 # print("Upgrade cells")
 # for (site, node, cell) in [i for i in existing_cell_in_site_node if v01UpgradeCell[i].X == 1]:
